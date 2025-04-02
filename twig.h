@@ -23,6 +23,7 @@ struct pcap_file_header {
 
 const uint16_t IP_ETHER_TYPE = 0x0800;
 const uint16_t ARP_ETHER_TYPE = 0x0806;
+const uint8_t ICMP_PROTO = 0x1;
 const uint8_t TCP_PROTO = 0x6;
 const uint8_t UDP_PROTO = 0x11;
 
@@ -57,6 +58,16 @@ struct ipv4_hdr {
 	uint32_t source_addr;
 	uint32_t dest_addr;
 };
+
+struct icmp_hdr {
+    uint8_t type;
+    uint8_t code;
+    uint16_t checksum;
+    uint32_t content;
+};
+
+const uint8_t ICMP_ECHO_REPLY_TYPE = 0x1;
+const uint8_t ICMP_ECHO_REQ_TYPE = 0x8;
 
 struct tcp_hdr {
 	uint16_t src_port;
