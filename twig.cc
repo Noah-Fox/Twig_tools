@@ -27,7 +27,7 @@ bool processIcmp(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHead
 
 bool processArp(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, char arpBuffer[], int bufferLen);
 
-void createEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader, icmp_hdr* icmpHeader, char dataBuffer[], int bufferLen);
+void createEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader, icmp_hdr* icmpHeader, char icmpBuffer[], int bufferLen);
 
 uint16_t generateIcmpChecksum(icmp_hdr* icmpHeader, char dataBuffer[], int bufferLen);
 
@@ -258,7 +258,7 @@ bool processIcmp(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHead
         if (DEBUG){
             printf("Replying to echo request\n");
         }
-        createEchoReply(packetHeader, ethHeader, ipHeader, icmpHeader, icmpBuffer+sizeof(struct icmp_hdr), bufferLen-sizeof(struct icmp_hdr));
+        createEchoReply(packetHeader, ethHeader, ipHeader, icmpHeader, icmpBuffer, bufferLen);
     }
 
     return true;
@@ -274,7 +274,7 @@ bool processArp(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, char arpBuffer[],
     return true;
 }
 
-void createEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader, icmp_hdr* icmpHeader, char dataBuffer[], int bufferLen){
+void createEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader, icmp_hdr* icmpHeader, char icmpBuffer[], int bufferLen){
     struct iovec iov[5];
     pcap_pkthdr* replyPacketHeader = new pcap_pkthdr;
     eth_hdr* replyEthHeader = new eth_hdr;
@@ -299,11 +299,11 @@ void createEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ip
 
     *replyIcmpHeader = *icmpHeader;
     replyIcmpHeader->type = ICMP_ECHO_REPLY_TYPE;
-    replyIcmpHeader->checksum = generateIcmpChecksum(replyIcmpHeader, dataBuffer, bufferLen);
+    replyIcmpHeader->checksum = generateIcmpChecksum(replyIcmpHeader, icmpBuffer, bufferLen);
     iov[3].iov_base = replyIcmpHeader;
     iov[3].iov_len = sizeof(struct icmp_hdr);
 
-    iov[4].iov_base = dataBuffer;
+    iov[4].iov_base = icmpBuffer + sizeof(struct icmp_hdr);
     iov[4].iov_len = packetHeader->caplen - sizeof(struct eth_hdr) - sizeof(struct ipv4_hdr) - sizeof(struct icmp_hdr);
 
     int writeSuccess = writev(outputFd, iov, 5);
@@ -319,17 +319,23 @@ void createEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ip
 
 uint16_t generateIcmpChecksum(icmp_hdr* icmpHeader, char dataBuffer[], int bufferLen){
     uint32_t checksum = 0;
-    checksum += icmpHeader->type;
+    checksum += (icmpHeader->type << 8) + (icmpHeader->code);
     checksum = (checksum & 0xFFFF) + (checksum >> 16);
-    checksum += icmpHeader->code;
+    checksum += htons(icmpHeader->content) & 0xFFFF;
     checksum = (checksum & 0xFFFF) + (checksum >> 16);
-    checksum += icmpHeader->content;
+    checksum += htons(icmpHeader->content >> 16);
     checksum = (checksum & 0xFFFF) + (checksum >> 16);
 
-    for (int i = 0; i < bufferLen; i += 16){
-        checksum += (uint16_t)(bufferLen + i);
+
+    for (int i = sizeof(struct icmp_hdr); i < bufferLen; i += 2){
+        uint16_t group = ((*(dataBuffer + i) & 0xFF) << 8) + (*(dataBuffer + i + 1) & 0xFF);
+        checksum += group;
         checksum = (checksum & 0xFFFF) + (checksum >> 16);
     }
 
-    return ~checksum;
+    if (DEBUG){
+        printf("Generating checksum %04x\n", htons(~checksum));
+    }
+
+    return htons(~checksum);
 }
