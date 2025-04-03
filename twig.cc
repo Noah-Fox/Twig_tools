@@ -68,7 +68,7 @@ int main(int argc, char *argv[]){
         cout << "Opened " << fileName << "\n";
     }
 
-    outputFd = open("test-output.dmp", O_WRONLY | O_APPEND);
+    outputFd = open(fileName.c_str(), O_WRONLY | O_APPEND);
     if (outputFd == -1){
         fflush(stdout);
         fprintf(stderr, "Error opening test-output.dmp\n");
