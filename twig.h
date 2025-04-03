@@ -68,6 +68,7 @@ struct icmp_hdr {
 
 const uint8_t ICMP_ECHO_REPLY_TYPE = 0x0;
 const uint8_t ICMP_ECHO_REQ_TYPE = 0x8;
+const uint16_t UDP_ECHO_REQ_PORT = 0x7;
 
 struct tcp_hdr {
 	uint16_t src_port;

@@ -21,15 +21,27 @@ bool readPacket();// Calls readEthernet()
 
 bool readEthernet(pcap_pkthdr* packetHeader);// Calls processIpv4() or processArp()
 
-bool processIpv4(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, char ipBuffer[], int bufferLen);// Calls processIcmp()
+bool processIpv4(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, char ipBuffer[], int bufferLen);// Calls processIcmp() or processUdp()
 
-bool processIcmp(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader, char icmpBuffer[], int bufferLen);// Calls createEchoReply()
+bool processIcmp(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, 
+                ipv4_hdr* ipHeader, char icmpBuffer[], int bufferLen);// Calls createEchoReply()
+
+bool processUdp(pcap_pkthdr* packetHeader, eth_hdr* ethHeader,
+                ipv4_hdr* ipHeader, char udpBuffer[], int bufferLen);
 
 bool processArp(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, char arpBuffer[], int bufferLen);
 
-void createEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader, icmp_hdr* icmpHeader, char icmpBuffer[], int bufferLen);
+void createIcmpEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader, 
+                        icmp_hdr* icmpHeader, char icmpBuffer[], int bufferLen);
+
+void createUdpEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader,
+                        udp_hdr* udpHeader, char udpBuffer[], int bufferLen);
+
+void createEchoReplyHeaders(iovec iov[], pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader);
 
 uint16_t generateIcmpChecksum(icmp_hdr* icmpHeader, char dataBuffer[], int bufferLen);
+
+uint16_t generateUdpChecksum(ipv4_hdr* ipHeader, udp_hdr* udpHeader, char dataBuffer[], int bufferLen);
 
 int main(int argc, char *argv[]){
     string ipAddr = "";
@@ -237,6 +249,9 @@ bool processIpv4(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, char ipBuffer[],
     if (ipHeader->proto == ICMP_PROTO){
         return processIcmp(packetHeader,ethHeader,ipHeader, ipBuffer + sizeof(struct ipv4_hdr), bufferLen-sizeof(struct ipv4_hdr));
     }
+    if (ipHeader->proto == UDP_PROTO){
+        return processUdp(packetHeader, ethHeader, ipHeader, ipBuffer + sizeof(struct ipv4_hdr), bufferLen-sizeof(struct ipv4_hdr));
+    }
 
     return true;
 }
@@ -258,7 +273,7 @@ bool processIcmp(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHead
         if (DEBUG){
             printf("Replying to echo request\n");
         }
-        createEchoReply(packetHeader, ethHeader, ipHeader, icmpHeader, icmpBuffer, bufferLen);
+        createIcmpEchoReply(packetHeader, ethHeader, ipHeader, icmpHeader, icmpBuffer, bufferLen);
     }
 
     return true;
@@ -274,28 +289,10 @@ bool processArp(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, char arpBuffer[],
     return true;
 }
 
-void createEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader, icmp_hdr* icmpHeader, char icmpBuffer[], int bufferLen){
+void createIcmpEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader, icmp_hdr* icmpHeader, char icmpBuffer[], int bufferLen){
     struct iovec iov[5];
-    pcap_pkthdr* replyPacketHeader = new pcap_pkthdr;
-    eth_hdr* replyEthHeader = new eth_hdr;
-    ipv4_hdr* replyIpHeader = new ipv4_hdr;
+    createEchoReplyHeaders(iov, packetHeader, ethHeader, ipHeader);
     icmp_hdr* replyIcmpHeader = new icmp_hdr;
-
-    *replyPacketHeader = *packetHeader;
-    iov[0].iov_base = replyPacketHeader;
-    iov[0].iov_len = sizeof(struct pcap_pkthdr);
-
-    memcpy(replyEthHeader->dest_addr, ethHeader->src_addr, 6);
-    memcpy(replyEthHeader->src_addr, ethHeader->dest_addr, 6);
-    replyEthHeader->ether_type = ethHeader->ether_type;
-    iov[1].iov_base = replyEthHeader;
-    iov[1].iov_len = sizeof(struct eth_hdr);
-
-    *replyIpHeader = *ipHeader;
-    replyIpHeader->dest_addr = ipHeader->source_addr;
-    replyIpHeader->source_addr = ipHeader->dest_addr;
-    iov[2].iov_base = replyIpHeader;
-    iov[2].iov_len = sizeof(struct ipv4_hdr);
 
     *replyIcmpHeader = *icmpHeader;
     replyIcmpHeader->type = ICMP_ECHO_REPLY_TYPE;
@@ -309,11 +306,11 @@ void createEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ip
     int writeSuccess = writev(outputFd, iov, 5);
     if (writeSuccess == -1){
         fflush(stdout);
-        perror("Echo reply failed");
+        perror("ICMP Echo reply failed");
         exit(0);
     }
     if (DEBUG){
-        printf("Echo reply successful. %d bytes written\n", writeSuccess);
+        printf("ICMP Echo reply successful. %d bytes written\n", writeSuccess);
     }
 }
 
@@ -338,4 +335,122 @@ uint16_t generateIcmpChecksum(icmp_hdr* icmpHeader, char dataBuffer[], int buffe
     }
 
     return htons(~checksum);
+}
+
+bool processUdp(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader, char udpBuffer[], int bufferLen){
+    struct udp_hdr* udpHeader = (struct udp_hdr*)(udpBuffer);
+
+    if (DEBUG){
+        printf("Reading UDP Header\n");
+    }
+    if (DEBUG > 1){
+        printf("\tSource port: %x\n", ntohs(udpHeader->src_port));
+        printf("\tDest port: %x\n", ntohs(udpHeader->dest_port));
+    }
+
+    if (ntohs(udpHeader->dest_port) == UDP_ECHO_REQ_PORT){
+        createUdpEchoReply(packetHeader, ethHeader, ipHeader, udpHeader, udpBuffer, bufferLen);
+    }
+
+    return true;
+}
+
+void createUdpEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader, udp_hdr* udpHeader, char udpBuffer[], int bufferLen){
+    if (DEBUG){
+        printf("Create UDP Echo reply\n");
+    }
+
+    struct iovec iov[5];
+    createEchoReplyHeaders(iov, packetHeader, ethHeader, ipHeader);
+    struct udp_hdr* replyUdpHeader = new udp_hdr;
+
+    struct ipv4_hdr* replyIpHeader = (struct ipv4_hdr*)(iov[2].iov_base);
+
+    replyUdpHeader->dest_port = udpHeader->src_port;
+    replyUdpHeader->src_port = udpHeader->dest_port;
+    replyUdpHeader->length = udpHeader->length;
+    replyUdpHeader->csum = generateUdpChecksum(replyIpHeader, replyUdpHeader, udpBuffer+sizeof(struct udp_hdr), bufferLen-sizeof(struct udp_hdr));
+    iov[3].iov_base = replyUdpHeader;
+    iov[3].iov_len = sizeof(struct udp_hdr);
+
+    iov[4].iov_base = udpBuffer + sizeof(struct udp_hdr);
+    iov[4].iov_len = bufferLen-sizeof(struct udp_hdr);
+
+    int writeSuccess = writev(outputFd, iov, 5);
+    if (writeSuccess == -1){
+        fflush(stdout);
+        perror("UDP Echo reply failed");
+        exit(0);
+    }
+    if (DEBUG){
+        printf("UDP Echo reply successful\n");
+    }
+}
+
+uint16_t generateUdpChecksum(ipv4_hdr* ipHeader, udp_hdr* udpHeader, char dataBuffer[], int bufferLen){
+    uint32_t checksum = 0;
+
+    checksum += htons((ipHeader->hlen << 12) + (ipHeader->vers << 8) + ipHeader->type_serv);
+    checksum = (checksum & 0xFFFF) + (checksum >> 16);
+    checksum += htons(ipHeader->total_length);
+    checksum = (checksum & 0xFFFF) + (checksum >> 16);
+    checksum += htons(ipHeader->ident);
+    checksum = (checksum & 0xFFFF) + (checksum >> 16);
+    checksum += htons(ipHeader->frag);
+    checksum = (checksum & 0xFFFF) + (checksum >> 16);
+    checksum += htons((ipHeader->time << 8) + ipHeader->proto);
+    checksum = (checksum & 0xFFFF) + (checksum >> 16);
+    checksum += htons(ipHeader->check_sum);
+    checksum = (checksum & 0xFFFF) + (checksum >> 16);
+    checksum += htons(ipHeader->source_addr >> 8);
+    checksum = (checksum & 0xFFFF) + (checksum >> 16);
+    checksum += htons(ipHeader->source_addr & 0xFFFF);
+    checksum = (checksum & 0xFFFF) + (checksum >> 16);
+    checksum += htons(ipHeader->dest_addr >> 8);
+    checksum = (checksum & 0xFFFF) + (checksum >> 16);
+    checksum += htons(ipHeader->dest_addr & 0xFFFF);
+    checksum = (checksum & 0xFFFF) + (checksum >> 16);
+
+    checksum += htons(udpHeader->src_port);
+    checksum = (checksum & 0xFFFF) + (checksum >> 16);
+    checksum += htons(udpHeader->dest_port);
+    checksum = (checksum & 0xFFFF) + (checksum >> 16);
+    checksum += htons(udpHeader->length);
+    checksum = (checksum & 0xFFFF) + (checksum >> 16);
+
+    for (int i = 0; i < bufferLen; i += 2){
+        uint16_t group = ((*(dataBuffer + i) & 0xFF) << 8) + (*(dataBuffer + i + 1) & 0xFF);
+        checksum += group;
+        checksum = (checksum & 0xFFFF) + (checksum >> 16);
+    }
+
+    checksum = ~checksum;
+
+    if (DEBUG){
+        printf("UDP Checksum created: %04x\n", checksum & 0xFFFF);
+    }
+
+    return checksum;
+}
+
+void createEchoReplyHeaders(iovec iov[], pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader){
+    pcap_pkthdr* replyPacketHeader = new pcap_pkthdr;
+    eth_hdr* replyEthHeader = new eth_hdr;
+    ipv4_hdr* replyIpHeader = new ipv4_hdr;
+
+    *replyPacketHeader = *packetHeader;
+    iov[0].iov_base = replyPacketHeader;
+    iov[0].iov_len = sizeof(struct pcap_pkthdr);
+
+    memcpy(replyEthHeader->dest_addr, ethHeader->src_addr, 6);
+    memcpy(replyEthHeader->src_addr, ethHeader->dest_addr, 6);
+    replyEthHeader->ether_type = ethHeader->ether_type;
+    iov[1].iov_base = replyEthHeader;
+    iov[1].iov_len = sizeof(struct eth_hdr);
+
+    *replyIpHeader = *ipHeader;
+    replyIpHeader->dest_addr = ipHeader->source_addr;
+    replyIpHeader->source_addr = ipHeader->dest_addr;
+    iov[2].iov_base = replyIpHeader;
+    iov[2].iov_len = sizeof(struct ipv4_hdr);
 }
