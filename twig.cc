@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/uio.h>
+#include <time.h>
 #include "twig.h"
 
 using namespace std;
@@ -35,6 +36,9 @@ void createIcmpEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr
                         icmp_hdr* icmpHeader, char icmpBuffer[], int bufferLen);
 
 void createUdpEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader,
+                        udp_hdr* udpHeader, char udpBuffer[], int bufferLen);
+
+void createUdpTimeReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader,
                         udp_hdr* udpHeader, char udpBuffer[], int bufferLen);
 
 void createEchoReplyHeaders(iovec iov[], pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader);
@@ -351,6 +355,9 @@ bool processUdp(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeade
     if (ntohs(udpHeader->dest_port) == UDP_ECHO_REQ_PORT){
         createUdpEchoReply(packetHeader, ethHeader, ipHeader, udpHeader, udpBuffer, bufferLen);
     }
+    if (ntohs(udpHeader->dest_port) == UDP_TIME_REQ_PORT){
+        createUdpTimeReply(packetHeader, ethHeader, ipHeader, udpHeader, udpBuffer, bufferLen);
+    }
 
     return true;
 }
@@ -384,6 +391,71 @@ void createUdpEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr*
     }
     if (DEBUG){
         printf("UDP Echo reply successful\n");
+    }
+}
+
+void createUdpTimeReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader, udp_hdr* udpHeader, char udpBuffer[], int bufferLen){
+    if (DEBUG){
+        printf("Creating UDP Time Protocol response\n");
+    }
+
+    struct iovec iov[5];
+    
+    struct pcap_pkthdr* replyPacketHeader = new pcap_pkthdr;
+    struct eth_hdr* replyEthHeader = new eth_hdr;
+    struct ipv4_hdr* replyIpHeader = new ipv4_hdr;
+    struct udp_hdr* replyUdpHeader = new udp_hdr;
+
+    *replyPacketHeader = *packetHeader;
+    replyPacketHeader->caplen = sizeof(struct eth_hdr) + sizeof(struct ipv4_hdr) + sizeof(struct udp_hdr) + 4;
+    replyPacketHeader->len = replyPacketHeader->caplen;
+    iov[0].iov_base = replyPacketHeader;
+    iov[0].iov_len = sizeof(struct pcap_pkthdr);
+
+    memcpy(replyEthHeader->dest_addr, ethHeader->src_addr, 6);
+    memcpy(replyEthHeader->src_addr, ethHeader->dest_addr, 6);
+    replyEthHeader->ether_type = ethHeader->ether_type;
+    iov[1].iov_base = replyEthHeader;
+    iov[1].iov_len = sizeof(struct eth_hdr);
+
+    memcpy(replyIpHeader, ipHeader, sizeof(struct ipv4_hdr));
+    replyIpHeader->dest_addr = ipHeader->source_addr;
+    replyIpHeader->source_addr = ipHeader->dest_addr;
+    replyIpHeader->total_length = htons(sizeof(struct ipv4_hdr) + sizeof(struct udp_hdr) + 4);
+    iov[2].iov_base = replyIpHeader;
+    iov[2].iov_len = sizeof(struct ipv4_hdr);
+
+    uint32_t replyTime = time(NULL) + 2208988800;// Seconds from midnight 1900 to midnight 1970, RFC 868
+    char timeBuf[4];
+    for (int i = 0; i < 4; i ++){
+        timeBuf[3-i] = (char)(((replyTime) >> 8*i) & 0xFF);
+    }
+    if (DEBUG > 1){
+        printf("Time since 1900 generated: %u seconds\n", replyTime);
+    }
+    if (DEBUG > 2){
+        printf("\t%u %u %u %u\n", timeBuf[0], timeBuf[1], timeBuf[2], timeBuf[3]);
+        printf("\t%x => %02x %02x %02x %02x\n", htonl(replyTime), timeBuf[0], timeBuf[1], timeBuf[2], timeBuf[3]);
+    }
+    iov[4].iov_base = timeBuf;
+    iov[4].iov_len = 4;
+
+    replyUdpHeader->dest_port = udpHeader->src_port;
+    replyUdpHeader->src_port = udpHeader->dest_port;
+    replyUdpHeader->length = htons(sizeof(struct udp_hdr) + 4);
+    replyUdpHeader->csum = generateUdpChecksum(replyIpHeader, replyUdpHeader, timeBuf, 4);
+    iov[3].iov_base = replyUdpHeader;
+    iov[3].iov_len = sizeof(struct udp_hdr);
+
+
+    int writeSuccess = writev(outputFd, iov, 5);
+    if (writeSuccess == -1){
+        fflush(stdout);
+        perror("Error writing udp time reply");
+        exit(0);
+    }
+    if (DEBUG){
+        printf("UDP Time Protocol response written succesfully\n");
     }
 }
 
