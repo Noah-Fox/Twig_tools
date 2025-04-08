@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <sys/uio.h>
 #include <time.h>
+#include <vector>
 #include "twig.h"
 
 using namespace std;
@@ -46,6 +47,8 @@ void createEchoReplyHeaders(iovec iov[], pcap_pkthdr* packetHeader, eth_hdr* eth
 uint16_t generateIcmpChecksum(icmp_hdr* icmpHeader, char dataBuffer[], int bufferLen);
 
 uint16_t generateUdpChecksum(ipv4_hdr* ipHeader, udp_hdr* udpHeader, char dataBuffer[], int bufferLen);
+
+uint16_t onesCompSum(vector<uint16_t> values);
 
 int main(int argc, char *argv[]){
     string ipAddr = "";
@@ -443,7 +446,7 @@ void createUdpTimeReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr*
     replyUdpHeader->dest_port = udpHeader->src_port;
     replyUdpHeader->src_port = udpHeader->dest_port;
     replyUdpHeader->length = htons(sizeof(struct udp_hdr) + 4);
-    replyUdpHeader->csum = generateUdpChecksum(replyIpHeader, replyUdpHeader, timeBuf, 4);
+    replyUdpHeader->csum = htons(generateUdpChecksum(replyIpHeader, replyUdpHeader, timeBuf, 4));
     iov[3].iov_base = replyUdpHeader;
     iov[3].iov_len = sizeof(struct udp_hdr);
 
@@ -460,49 +463,21 @@ void createUdpTimeReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr*
 }
 
 uint16_t generateUdpChecksum(ipv4_hdr* ipHeader, udp_hdr* udpHeader, char dataBuffer[], int bufferLen){
-    uint32_t checksum = 0;
-
-    checksum += htons((ipHeader->hlen << 12) + (ipHeader->vers << 8) + ipHeader->type_serv);
-    checksum = (checksum & 0xFFFF) + (checksum >> 16);
-    checksum += htons(ipHeader->total_length);
-    checksum = (checksum & 0xFFFF) + (checksum >> 16);
-    checksum += htons(ipHeader->ident);
-    checksum = (checksum & 0xFFFF) + (checksum >> 16);
-    checksum += htons(ipHeader->frag);
-    checksum = (checksum & 0xFFFF) + (checksum >> 16);
-    checksum += htons((ipHeader->time << 8) + ipHeader->proto);
-    checksum = (checksum & 0xFFFF) + (checksum >> 16);
-    checksum += htons(ipHeader->check_sum);
-    checksum = (checksum & 0xFFFF) + (checksum >> 16);
-    checksum += htons(ipHeader->source_addr >> 8);
-    checksum = (checksum & 0xFFFF) + (checksum >> 16);
-    checksum += htons(ipHeader->source_addr & 0xFFFF);
-    checksum = (checksum & 0xFFFF) + (checksum >> 16);
-    checksum += htons(ipHeader->dest_addr >> 8);
-    checksum = (checksum & 0xFFFF) + (checksum >> 16);
-    checksum += htons(ipHeader->dest_addr & 0xFFFF);
-    checksum = (checksum & 0xFFFF) + (checksum >> 16);
-
-    checksum += htons(udpHeader->src_port);
-    checksum = (checksum & 0xFFFF) + (checksum >> 16);
-    checksum += htons(udpHeader->dest_port);
-    checksum = (checksum & 0xFFFF) + (checksum >> 16);
-    checksum += htons(udpHeader->length);
-    checksum = (checksum & 0xFFFF) + (checksum >> 16);
-
+    vector<uint16_t> values;
+    values.push_back( htons(ipHeader->source_addr & 0xFFFF));
+    values.push_back(htons(ipHeader->source_addr >> 16));
+    values.push_back(htons(ipHeader->dest_addr & 0xFFFF));
+    values.push_back(htons(ipHeader->dest_addr >> 16));
+    values.push_back((ipHeader->proto & 0xFF));
+    values.push_back(htons(udpHeader->src_port));
+    values.push_back(htons(udpHeader->dest_port));
+    values.push_back(htons(udpHeader->length));
+    values.push_back(htons(udpHeader->length));
     for (int i = 0; i < bufferLen; i += 2){
-        uint16_t group = ((*(dataBuffer + i) & 0xFF) << 8) + (*(dataBuffer + i + 1) & 0xFF);
-        checksum += group;
-        checksum = (checksum & 0xFFFF) + (checksum >> 16);
+        values.push_back(((*(dataBuffer + i) & 0xFF) << 8) + (*(dataBuffer + i + 1) & 0xFF));
     }
-
-    checksum = ~checksum;
-
-    if (DEBUG){
-        printf("UDP Checksum created: %04x\n", checksum & 0xFFFF);
-    }
-
-    return checksum;
+    
+    return onesCompSum(values);
 }
 
 void createEchoReplyHeaders(iovec iov[], pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader){
@@ -525,4 +500,25 @@ void createEchoReplyHeaders(iovec iov[], pcap_pkthdr* packetHeader, eth_hdr* eth
     replyIpHeader->source_addr = ipHeader->dest_addr;
     iov[2].iov_base = replyIpHeader;
     iov[2].iov_len = sizeof(struct ipv4_hdr);
+}
+
+
+uint16_t onesCompSum(vector<uint16_t> values){
+    if (DEBUG > 2){
+        printf("One's complement summing:\n");
+    }
+    uint32_t sum = 0;
+    for (size_t i = 0; i < values.size(); i ++){
+        sum += values[i];
+        sum = (sum & 0xFFFF) + (sum >> 16);
+        if (DEBUG > 2){
+            printf("\t%04x\n", values[i]);
+        }
+    }
+
+    if (DEBUG > 1){
+        printf("One's complement sum found: %04x\n", (~sum) & 0xFFFF);
+    }
+
+    return (~sum) & 0xFFFF;
 }
