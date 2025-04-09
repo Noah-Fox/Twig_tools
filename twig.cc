@@ -50,6 +50,8 @@ uint16_t generateIcmpChecksum(icmp_hdr* icmpHeader, char dataBuffer[], int buffe
 
 uint16_t generateUdpChecksum(ipv4_hdr* ipHeader, udp_hdr* udpHeader, char dataBuffer[], int bufferLen);
 
+uint16_t generateIpv4Checksum(ipv4_hdr* ipHeader);
+
 uint16_t onesCompSum(vector<uint16_t> values);
 
 int main(int argc, char *argv[]){
@@ -567,6 +569,22 @@ uint16_t generateUdpChecksum(ipv4_hdr* ipHeader, udp_hdr* udpHeader, char dataBu
     return onesCompSum(values);
 }
 
+uint16_t generateIpv4Checksum(ipv4_hdr* ipHeader){
+    vector<uint16_t> values;
+    values.push_back(((ipHeader->vers << 12) | (ipHeader->hlen << 8) | (ipHeader->type_serv)));
+    values.push_back(htons(ipHeader->total_length));
+    values.push_back(htons(ipHeader->ident));
+    values.push_back(htons(ipHeader->frag));
+    values.push_back(htons((ipHeader->proto << 8) | (ipHeader->time)));
+    values.push_back((htonl(ipHeader->source_addr) & (0xFFFF << 16)) >> 16);
+    values.push_back((htonl(ipHeader->source_addr) & 0xFFFF));
+    values.push_back((htonl(ipHeader->dest_addr) & (0xFFFF << 16)) >> 16);
+    values.push_back((htonl(ipHeader->dest_addr) & 0xFFFF));
+
+
+    return onesCompSum(values);
+}
+
 void createEchoReplyHeaders(iovec iov[], pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader){
     pcap_pkthdr* replyPacketHeader = new pcap_pkthdr;
     eth_hdr* replyEthHeader = new eth_hdr;
@@ -585,6 +603,7 @@ void createEchoReplyHeaders(iovec iov[], pcap_pkthdr* packetHeader, eth_hdr* eth
     *replyIpHeader = *ipHeader;
     replyIpHeader->dest_addr = ipHeader->source_addr;
     replyIpHeader->source_addr = ipHeader->dest_addr;
+    replyIpHeader->check_sum = htons(generateIpv4Checksum(replyIpHeader));
     iov[2].iov_base = replyIpHeader;
     iov[2].iov_len = sizeof(struct ipv4_hdr);
 }
