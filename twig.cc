@@ -6,6 +6,7 @@
 #include <sys/uio.h>
 #include <time.h>
 #include <vector>
+#include <map>
 #include "twig.h"
 
 using namespace std;
@@ -14,6 +15,7 @@ int DEBUG = 0;
 int fd = -1;
 int outputFd = -1;
 bool flipValues = false;
+map<uint64_t, uint32_t> addressCache;
 
 void cliHelp(string cmd);
 
@@ -53,6 +55,8 @@ uint16_t generateUdpChecksum(ipv4_hdr* ipHeader, udp_hdr* udpHeader, char dataBu
 uint16_t generateIpv4Checksum(ipv4_hdr* ipHeader);
 
 uint16_t onesCompSum(vector<uint16_t> values);
+
+void cacheAddress(uint8_t hardwareAddressArr[], uint8_t ipAddressArr[]);
 
 int main(int argc, char *argv[]){
     string ipAddr = "";
@@ -376,11 +380,13 @@ bool processIcmp(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHead
 }
 
 bool processArp(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, char arpBuffer[], int bufferLen){
-    // struct arp_hdr* arpHeader = (struct arp_hdr*)(ethBuffer);
+    struct arp_hdr* arpHeader = (struct arp_hdr*)(arpBuffer);
 
     if (DEBUG){
         printf("Read arp header successful\n");
     }
+
+    cacheAddress(arpHeader->src_haddr, arpHeader->src_iaddr);
 
     return true;
 }
@@ -626,4 +632,18 @@ uint16_t onesCompSum(vector<uint16_t> values){
     }
 
     return (~sum) & 0xFFFF;
+}
+
+void cacheAddress(uint8_t hardwareAddressArr[], uint8_t ipAddressArr[]){
+    uint64_t hardwareAddress = 0;
+    uint32_t ipAddress = 0;
+
+    for (int i = 0; i < 6; i ++){
+        hardwareAddress = hardwareAddress | ((hardwareAddressArr[i]) << (40 - 8 * i));
+    }
+    for (int i = 0; i < 4; i ++){
+        ipAddress = ipAddress | ((ipAddressArr[i]) << (24 - 8 * i));
+    }
+
+    addressCache[hardwareAddress] = ipAddress;
 }
