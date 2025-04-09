@@ -520,6 +520,7 @@ void createUdpTimeReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr*
     replyIpHeader->dest_addr = ipHeader->source_addr;
     replyIpHeader->source_addr = ipHeader->dest_addr;
     replyIpHeader->total_length = htons(sizeof(struct ipv4_hdr) + sizeof(struct udp_hdr) + 4);
+    replyIpHeader->check_sum = htons(generateIpv4Checksum(replyIpHeader));
     iov[2].iov_base = replyIpHeader;
     iov[2].iov_len = sizeof(struct ipv4_hdr);
 
@@ -646,4 +647,8 @@ void cacheAddress(uint8_t hardwareAddressArr[], uint8_t ipAddressArr[]){
     }
 
     addressCache[hardwareAddress] = ipAddress;
+
+    if (DEBUG > 1){
+        printf("Cachine map from hardware address 0x%lx to IP Address 0x%x\n", hardwareAddress, ipAddress);
+    }
 }
