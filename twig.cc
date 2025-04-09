@@ -17,6 +17,8 @@ bool flipValues = false;
 
 void cliHelp(string cmd);
 
+string parseFileName(string ipAddr);
+
 void readPCap();// Calls readPacket() on infinite loop
 
 bool readPacket();// Calls readEthernet()
@@ -77,7 +79,10 @@ int main(int argc, char *argv[]){
         cout << "Beginning twig on IPv4 Address " << ipAddr << "\n";
     }
 
-    fileName = ipAddr + ".dmp";
+    fileName = parseFileName(ipAddr);
+    if (fileName == ""){
+        cliHelp(argv[0]);
+    }
     fd = open(fileName.c_str(), O_RDWR);
     if (fd == -1){
         cerr << "Error opening " << fileName << "\n";
@@ -103,6 +108,88 @@ int main(int argc, char *argv[]){
 void cliHelp(string cmd){
     cout << "Usage: " << cmd << " [-d] -i IPv4addr_masklength\n";
     exit(0);
+}
+
+string parseFileName(string ipAddr){
+    uint32_t addr = 0;
+    int dotPos[6];
+    dotPos[0] = -1;
+    int onDot = 1;
+    for (size_t i = 0; i < ipAddr.size(); i ++){
+        if (ipAddr[i] == '.'){
+            if (onDot < 4){
+                dotPos[onDot] = i;
+                onDot ++;
+            }
+            else {
+                if (DEBUG){
+                    printf("Too many dots in ip address\n");
+                }
+                return "";
+            }
+        }
+        else if (ipAddr[i] == '_'){
+            if (onDot == 4){
+                dotPos[onDot] = i;
+                onDot ++;
+            }
+            else {
+                if (DEBUG){
+                    printf("Underscore in wrong position in ip address\n");
+                }
+                return "";
+            }
+        }
+        else if (!isdigit(ipAddr[i])){
+            if (DEBUG){
+                printf("Character %c is not a digit in ip address\n", ipAddr[i]);
+            }
+            return "";
+        }
+    }
+
+    if (onDot != 5){
+        if (DEBUG){
+            printf("Not enough dots and underscores in ip address\n");
+        }
+        return "";
+    }
+
+    for (int i = 0; i < 4; i ++){
+        addr = addr | ((stoi(ipAddr.substr(dotPos[i]+1,dotPos[i+1]-dotPos[i])) & 0xFF) << (24 - 8 * i));
+    }
+    uint mask = stoi(ipAddr.substr(dotPos[4]+1,ipAddr.size()-dotPos[4]));
+
+    if (DEBUG > 2){
+        printf("Address: 0x%08x\n", addr);
+        printf("Mask: %u 0x%x\n", mask, mask);
+    }
+
+    uint32_t maskOnes = 0;
+    for (uint i = 0; i < mask; i ++){
+        maskOnes = maskOnes | (1 << (31 - i));
+    }
+    addr = addr & maskOnes;
+
+    if (DEBUG > 2){
+        printf("Mask 1's: 0x%08x\n", maskOnes);
+        printf("Network: 0x%08x\n", addr);
+    }
+
+    string fileName = "";
+    for (int i = 0; i < 4; i ++){
+        uint8_t parsedVal = ((addr & (0xFF << (24 - 8 * i))) >> (24 - 8 * i));
+        if (DEBUG > 1){
+            printf("Field %d: 0x%02x (section 0x%08x)\n", i, parsedVal, (0xFF << (24 - 8 * i)));
+        }
+        fileName += to_string(parsedVal);
+        if (i < 3){
+            fileName += ".";
+        }
+    }
+    fileName += "_" + to_string(mask) + ".dmp";
+
+    return fileName;
 }
 
 void readPCap(){
@@ -379,7 +466,7 @@ void createUdpEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr*
     replyUdpHeader->dest_port = udpHeader->src_port;
     replyUdpHeader->src_port = udpHeader->dest_port;
     replyUdpHeader->length = udpHeader->length;
-    replyUdpHeader->csum = generateUdpChecksum(replyIpHeader, replyUdpHeader, udpBuffer+sizeof(struct udp_hdr), bufferLen-sizeof(struct udp_hdr));
+    replyUdpHeader->csum = htons(generateUdpChecksum(replyIpHeader, replyUdpHeader, udpBuffer+sizeof(struct udp_hdr), bufferLen-sizeof(struct udp_hdr)));
     iov[3].iov_base = replyUdpHeader;
     iov[3].iov_len = sizeof(struct udp_hdr);
 
@@ -501,7 +588,6 @@ void createEchoReplyHeaders(iovec iov[], pcap_pkthdr* packetHeader, eth_hdr* eth
     iov[2].iov_base = replyIpHeader;
     iov[2].iov_len = sizeof(struct ipv4_hdr);
 }
-
 
 uint16_t onesCompSum(vector<uint16_t> values){
     if (DEBUG > 2){
