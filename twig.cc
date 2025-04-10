@@ -17,43 +17,60 @@ int outputFd = -1;
 bool flipValues = false;
 map<uint64_t, uint32_t> addressCache;
 
+// Output command line arguments and exit
 void cliHelp(string cmd);
 
+// given ip address argument, return file name
 string parseFileName(string ipAddr);
 
+// Packet Capture layer. Parses packet capture file header
 void readPCap();// Calls readPacket() on infinite loop
 
+// Packet layer. Parses packet header
 bool readPacket();// Calls readEthernet()
 
+// Ethernet layer. Parses ethernet header
 bool readEthernet(pcap_pkthdr* packetHeader);// Calls processIpv4() or processArp()
 
+// IP layer. Processed Ipv4 header
 bool processIpv4(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, char ipBuffer[], int bufferLen);// Calls processIcmp() or processUdp()
 
+// ICMP layer, processes icmp header
 bool processIcmp(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, 
                 ipv4_hdr* ipHeader, char icmpBuffer[], int bufferLen);// Calls createEchoReply()
 
+// UDP layer, processes udp header
 bool processUdp(pcap_pkthdr* packetHeader, eth_hdr* ethHeader,
                 ipv4_hdr* ipHeader, char udpBuffer[], int bufferLen);
 
+// ARP layer, processed arp header
 bool processArp(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, char arpBuffer[], int bufferLen);
 
+// ICMP layer, creates response packet for icmp echo
 void createIcmpEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader, 
                         icmp_hdr* icmpHeader, char icmpBuffer[], int bufferLen);
 
+// UDP layer, creates response packet for udp echo
 void createUdpEchoReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader,
                         udp_hdr* udpHeader, char udpBuffer[], int bufferLen);
 
+// UDP layer, creates response packet for udp time
 void createUdpTimeReply(pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader,
                         udp_hdr* udpHeader, char udpBuffer[], int bufferLen);
 
+// ICMP/UDP layer, copies headers for an echo
 void createEchoReplyHeaders(iovec iov[], pcap_pkthdr* packetHeader, eth_hdr* ethHeader, ipv4_hdr* ipHeader);
 
+// ICMP layer
 uint16_t generateIcmpChecksum(icmp_hdr* icmpHeader, char dataBuffer[], int bufferLen);
 
+// UDP layer
 uint16_t generateUdpChecksum(ipv4_hdr* ipHeader, udp_hdr* udpHeader, char dataBuffer[], int bufferLen);
 
+// IP layer
 uint16_t generateIpv4Checksum(ipv4_hdr* ipHeader);
 
+// Utility: finds ones complement of ones complement sum of ever integer in values
 uint16_t onesCompSum(vector<uint16_t> values);
 
 void cacheAddress(uint8_t hardwareAddressArr[], uint8_t ipAddressArr[]);
