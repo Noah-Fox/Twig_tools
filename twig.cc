@@ -209,7 +209,7 @@ void readPCap(){
         if (readSuccess == sizeof(struct pcap_file_header)){
             break;
         }
-        sleep(1);
+        usleep(10000);
     }
 
 	if (pcapFileHeader->magic != PCAP_MAGIC){
@@ -245,7 +245,7 @@ void readPCap(){
     while (true){
         bool readPacketSuccess = readPacket();
         if (!readPacketSuccess) {
-            sleep(1);
+            usleep(10000);
         }
         else {
             if (DEBUG){
